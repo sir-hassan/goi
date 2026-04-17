@@ -13,6 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/sir-hassan/goi/process"
+	"github.com/sir-hassan/goi/ui"
 )
 
 type processExitedMsg struct {
@@ -30,6 +31,7 @@ type errMsg struct {
 type model struct {
 	input   textinput.Model
 	output  viewport.Model
+	table   *ui.Table
 	width   int
 	height  int
 	buffer  strings.Builder
@@ -44,12 +46,23 @@ type processStartedMsg struct {
 	msgs <-chan tea.Msg
 }
 
+const minOutputHeight = 5
+
 var (
-	appStyle = lipgloss.NewStyle().Padding(1)
-	boxStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
-	titleBar = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	statusOK = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	statusNG = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	appStyle   = lipgloss.NewStyle().Padding(1)
+	boxStyle   = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1)
+	titleBar   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	statusOK   = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	statusNG   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+	tableData = map[string]string{
+		"app":      "goi",
+		"runtime":  "bubbletea",
+		"usage92":  "%01",
+		"usage921":  "%10",
+		"usage922":  "%90",
+		"usage93":  "%100",
+		"usage94":  "%00100",
+	}
 )
 
 func newModel() *model {
@@ -61,9 +74,15 @@ func newModel() *model {
 	out := viewport.New()
 	out.SetContent("stdout will appear here")
 
+	table := ui.NewTable()
+	for key, value := range tableData {
+		table.SetKeyValue(key, value)
+	}
+
 	return &model{
 		input:  in,
 		output: out,
+		table:  table,
 		status: "idle",
 	}
 }
@@ -81,7 +100,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 		contentWidth := max(20, msg.Width-4)
-		outputHeight := max(5, msg.Height-8)
+		tableInnerWidth := contentWidth - boxStyle.GetHorizontalFrameSize()
+		m.table.SetWidth(tableInnerWidth)
+		outputHeight := max(minOutputHeight, msg.Height-fixedLayoutHeight(m.table))
 
 		m.input.SetWidth(contentWidth - 4)
 		m.output.SetWidth(contentWidth - 2)
@@ -178,6 +199,9 @@ func (m *model) View() tea.View {
 		commandLabel = "Stdin"
 	}
 
+	contentWidth := max(20, m.width-4)
+	m.table.SetWidth(contentWidth - boxStyle.GetHorizontalFrameSize())
+
 	statusStyle := statusOK
 	if strings.HasPrefix(m.status, "error") || strings.HasPrefix(m.status, "stop failed") || strings.Contains(m.status, "exited:") {
 		statusStyle = statusNG
@@ -186,8 +210,9 @@ func (m *model) View() tea.View {
 	body := lipgloss.JoinVertical(
 		lipgloss.Left,
 		titleBar.Render("goi"),
-		boxStyle.Width(max(20, m.width-4)).Render(m.output.View()),
-		boxStyle.Width(max(20, m.width-4)).Render(m.input.View()),
+		boxStyle.Width(contentWidth).Render(m.table.View()),
+		boxStyle.Width(contentWidth).Render(m.output.View()),
+		boxStyle.Width(contentWidth).Render(m.input.View()),
 		fmt.Sprintf("%s  %s", titleBar.Render(commandLabel+":"), statusStyle.Render(m.status)),
 		titleBar.Render("Enter: start/send  Esc: stop command or quit  Ctrl+C: quit"),
 	)
@@ -218,6 +243,18 @@ func (m *model) stopProcess() {
 	if err := m.proc.Stop(); err != nil {
 		m.status = "stop failed: " + err.Error()
 	}
+}
+
+func fixedLayoutHeight(table *ui.Table) int {
+	tableHeight := table.Height() + 2
+	inputHeight := 3
+	outputBorderHeight := 2
+	appPaddingHeight := 2
+	titleHeight := 1
+	statusHeight := 1
+	helpHeight := 1
+
+	return appPaddingHeight + titleHeight + tableHeight + inputHeight + outputBorderHeight + statusHeight + helpHeight
 }
 
 func startProcess(command string) tea.Cmd {
